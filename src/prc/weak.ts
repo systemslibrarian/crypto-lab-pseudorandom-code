@@ -41,10 +41,20 @@ export { distinctRowSpace, expectedComparisons, pairAgreementRate, weakKeyProbab
  * Below this many comparisons a single string says nothing.
  *
  * One pair gives one bit. Thirty comparisons at the codeword rate of 0.905
- * separate from thirty at 0.5 by about four standard deviations, which is the
- * least that can carry a verdict about ONE string; the paper's own analysis
- * assumes ml = r comparisons, drawn from many strings. Below this the page
- * shows the measured overlap and refuses to call it.
+ * separate from thirty at 0.5 by about four standard deviations IF they are
+ * independent, which is the least that can carry a verdict about ONE string;
+ * the paper's own analysis assumes ml = r comparisons, pooled across many
+ * strings. Below this the page shows the measured overlap and refuses to call
+ * it.
+ *
+ * They are not quite independent, and the floor is the brief's rather than a
+ * derivation: the m - 1 comparisons inside a group all share the anchor
+ * position, so they turn on one noise bit together and the independent unit is
+ * really the GROUP. At the parameters where this attack bites there are
+ * hundreds of groups — 814 of them at (4096, t = 3) — so the full-key
+ * measurement is unaffected; it is a truncated handful of comparisons that is
+ * noisier than its count suggests, which is an argument for the floor rather
+ * than against it. `weak.test.ts` measures the effect directly.
  */
 export const MIN_COMPARISONS = 30;
 

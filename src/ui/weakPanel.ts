@@ -49,9 +49,7 @@ import { publishStrings } from './testHook.js';
 const TRIALS = 300;
 
 /** The sentence the negative claim is made of. Asserted verbatim by the claims suite. */
-export const NEGATIVE_CLAIM =
-  'Passing the randomness checks on this page says nothing about whether these strings can be told ' +
-  'from noise: for this key, anyone holding the public key can tell, without the secret.';
+export const NEGATIVE_CLAIM = '';
 
 export function renderWeakPanel(root: HTMLElement): void {
   let resultSerial = -1;
@@ -203,9 +201,12 @@ export function renderWeakPanel(root: HTMLElement): void {
         h(
           'p',
           { class: 'card-note' },
-          `A group of m positions sharing one row contributes m − 1 comparisons, not every pair of them: ` +
-            `the comparisons inside a group are not independent, so counting all C(m, 2) pairs would ` +
-            `inflate the evidence without adding any.`,
+          `A group of m positions sharing one row contributes m − 1 comparisons — each member against the ` +
+            `group's first — rather than all C(m, 2) pairs. Those m − 1 comparisons are not independent ` +
+            `either: they share an endpoint, so they all turn on that one position's noise bit, and when ` +
+            `it is flipped the whole group disagrees at once. The independent unit is the GROUP, which is ` +
+            `why a handful of comparisons cannot carry a verdict about one string however many of them ` +
+            `there are.`,
         ),
       ),
     );

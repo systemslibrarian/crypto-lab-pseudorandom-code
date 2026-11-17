@@ -206,8 +206,15 @@ describe('check G — the distinguisher fails closed and says why', () => {
     expect(result.verdict).toBe('too-few');
     expect(result.flagged, 'no verdict may be claimed below the comparison floor').toBe(false);
     expect(result.enough).toBe(false);
-    // The measurement is still reported — that is what the page shows instead.
-    expect(result.agreement).toBeGreaterThan(0.5);
+    // The measurement is still reported — that is what the page shows instead
+    // of a verdict. It is asserted as a real fraction and NOT as "above one
+    // half", because at 29 comparisons it is not reliably above one half: see
+    // the correlation suite below. An earlier version of this test asserted
+    // > 0.5 and went red on a run where two of the three anchors it happened
+    // to span had their noise bit flipped.
+    expect(result.agreement).toBeGreaterThanOrEqual(0);
+    expect(result.agreement).toBeLessThanOrEqual(1);
+    expect(Number.isNaN(result.agreement)).toBe(false);
     expect(result.comparisons).toBe(29);
   });
 
@@ -223,5 +230,60 @@ describe('check G — the distinguisher fails closed and says why', () => {
   it('refuses a string of the wrong length', () => {
     const key = generateKey(makeParams({ n: 4096, t: 3, eta: 0.05 }));
     expect(() => distinguish(key.pk, randomBits(1024), 0.05)).toThrow(CodeError);
+  });
+});
+
+describe('the comparisons inside one group are NOT independent [slow]', () => {
+  it('they are all conditioned on the anchor position’s own noise bit [slow]', () => {
+    // Every member of a group is compared against the group's FIRST member, so
+    // a group of m positions yields m - 1 comparisons that all share one
+    // endpoint. Two positions carrying the same row of G agree exactly when
+    // their noise bits agree — so if the ANCHOR's noise bit is flipped, which
+    // happens with probability eta, that group's comparisons mostly DISAGREE,
+    // all of them at once.
+    //
+    // The consequence is about effective sample size: the independent unit is
+    // the GROUP, not the comparison. It does not weaken the full-key attack,
+    // which has hundreds of groups — the measured agreement there is 0.905 on
+    // the nose — but it is exactly why a handful of comparisons cannot carry a
+    // verdict about one string, and why the page refuses one below the floor.
+    const params = makeParams({ n: 4096, t: 3, eta: 0.05 });
+    const key = generateKey(params);
+    const full = findRepeatedRows(key.pk);
+    const biggest = full.groups[0];
+    expect(biggest.length, 'this measurement needs a group with several members').toBeGreaterThan(3);
+
+    const anchor = biggest[0];
+    const pairs = new Int32Array((biggest.length - 1) * 2);
+    for (let i = 1; i < biggest.length; i++) {
+      pairs[(i - 1) * 2] = anchor;
+      pairs[(i - 1) * 2 + 1] = biggest[i];
+    }
+    const oneGroup = { groups: [biggest], pairs, comparisons: biggest.length - 1, distinctRows: params.n };
+
+    const TRIALS = 400;
+    let mostlyDisagreed = 0;
+    for (let i = 0; i < TRIALS; i++) {
+      const { x } = encode(key.pk, params.eta);
+      if (distinguish(key.pk, x, params.eta, oneGroup).agreement < 0.5) mostlyDisagreed++;
+    }
+    const rate = mostlyDisagreed / TRIALS;
+
+    // Independent comparisons at 0.905 each would put a majority on the wrong
+    // side essentially never — for a group of 5, under 1 in 2,000. Through a
+    // shared anchor it happens at about eta, which is 1 in 20.
+    expect(rate, `${mostlyDisagreed}/${TRIALS} strings where the group mostly disagreed`).toBeGreaterThan(0.01);
+    expect(rate).toBeLessThan(0.15);
+
+    // And the full key, with hundreds of independent anchors, is unaffected:
+    // that is why the attack works at all.
+    const full400 = runTrialsSync(key, {
+      trials: 100,
+      delta: 0,
+      includeRandom: false,
+      includeDistinguisher: true,
+    });
+    expect(full400.codeword.flagged).toBe(100);
+    expect(meanAgreement(full400.codeword)).toBeGreaterThan(0.88);
   });
 });
