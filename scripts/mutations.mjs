@@ -16,11 +16,25 @@
  * text and assertion 3 must fail, or the negative-claim test is decorative).
  */
 
-/** Commands a mutation can be judged by. Each is run clean first, in the same run. */
+/**
+ * Commands a mutation can be judged by. Each is run clean first, in the same
+ * run. `browser: true` marks the ones that need this lab's Playwright port, so
+ * the runner can wait for it rather than reading a collision as a result.
+ */
 export const COMMANDS = {
-  unit: { cmd: 'npx', args: ['vitest', 'run'], label: 'npm test (Vitest)' },
-  claims: { cmd: 'npx', args: ['playwright', 'test', '--project=claims'], label: 'claims suite' },
-  a11y: { cmd: 'npx', args: ['playwright', 'test', '--project=a11y'], label: 'accessibility gate' },
+  unit: { cmd: 'npx', args: ['vitest', 'run'], label: 'npm test (Vitest)', browser: false },
+  claims: {
+    cmd: 'npx',
+    args: ['playwright', 'test', '--project=claims'],
+    label: 'claims suite',
+    browser: true,
+  },
+  a11y: {
+    cmd: 'npx',
+    args: ['playwright', 'test', '--project=a11y'],
+    label: 'accessibility gate',
+    browser: true,
+  },
 };
 
 export const MUTATIONS = [

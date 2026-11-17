@@ -9,9 +9,20 @@ import { defineConfig, devices } from '@playwright/test';
  *     a phone viewport. This lab runs its key generation and trials in a module
  *     Web Worker, which is the one part of it that can differ by engine.
  *
- * Port 4245 was assigned by the catalog's tools/port-sync.js and is unique to
- * this lab across the fleet. Never the Vite default 4173: a shared port means
- * `reuseExistingServer` silently scans a DIFFERENT lab's preview.
+ * Port 4245 was assigned by the catalog's `node tools/port-sync.js` and is
+ * pinned to this lab in committed state. Never the Vite default 4173: a shared
+ * port means `reuseExistingServer` silently scans a DIFFERENT lab's preview,
+ * which has really happened in this fleet.
+ *
+ * ONE COLLISION TO KNOW ABOUT, because the registry could not see it at the
+ * time. `port-sync` reports the next free port by reading the labs it can
+ * find, so two labs built in the same window are both told the same number:
+ * on 17 November 2026 it handed 4245 to this lab and to `crypto-lab-cold-boot`
+ * (which had no commits yet), and `crypto-lab-lightweight-bench` took 4246
+ * after noticing this lab's committed claim. If cold-boot keeps 4245, one of
+ * the two has to move and the registry decides; a run here that dies with
+ * "Port 4245 is already in use" while nothing of this lab's is running is that
+ * collision rather than a flake.
  */
 export default defineConfig({
   testDir: './e2e',

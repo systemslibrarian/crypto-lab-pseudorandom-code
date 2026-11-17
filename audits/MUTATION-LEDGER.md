@@ -13,7 +13,17 @@ that does not compile is DOES NOT BUILD and is never a kill.
 
 | # | Mutation | Judged by | Outcome | Observed |
 |---|---|---|---|---|
-| 4 | the pad z is left out of decoding | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: the generated key really decodes its own codewords, which is what the invariant buys 26ms |
+| 1 | s_i is sampled with weight t instead of t - 1 | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: 59 of 151 tests failed; first: yields once per chunk and returns the result at the end |
+| 2 | the unit entry of P's row is omitted, so P G != 0 | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: 62 of 151 tests failed; first: P (G u + z + 0 + z) = P G u = 0 |
+| 3 | the permutation is applied to G's rows but not to P's columns | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: 60 of 151 tests failed; first: ten codewords at (4096, t = 3, eta = 0.05) are unremarkable to both [slow] |
+| 4 | the pad z is left out of decoding | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: 14 of 151 tests failed; first: the generated key really decodes its own codewords, which is what the invariant buys |
+| 5 | the acceptance threshold uses r^(-1/2) instead of r^(-1/4) | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: 11 of 151 tests failed; first: n = 4096: r = 4055 gives 1519.3 |
+| 6 | the distinguisher reads the secret key | claims suite | **KILLED** | claims suite failed: 13 failed; first: 1 [claims] › e2e/claims.spec.ts:172:3 › displayed claims › "accepted" appears exactly when the weight is below the threshold on screen (1.3s) |
+| 7 | the distinguisher's verdict is set when comparisons exist, not from the agreement | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: 3 of 151 tests failed; first: flags at least 99% of 300 codewords and at most 1% of 300 random strings [slow] |
+| 8 | the weak-key probability is computed with N = C(k, t) | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: 13 of 151 tests failed; first: at (4096, t = 3) there are 820 possible appended rows against 4055 of them |
+| 9 | acceptance uses <= on a syndrome weight over only the first half of the checks | npm test (Vitest) | **KILLED** | npm test (Vitest) failed: 8 of 151 tests failed; first: the pad is what stops the all-zero STRING decoding as a codeword |
+| 10 | the muted text token is degraded below 4.5:1 | accessibility gate | **KILLED** | accessibility gate failed: 2 failed; first: 2 [a11y] › e2e/a11y.spec.ts:50:3 › no WCAG A/AA violations in dark theme at 380px (1.5s) |
+| 11 | the negative-claim sentence is deleted from the page | claims suite | **KILLED** | claims suite failed: 5 failed; first: 9 [claims] › e2e/claims.spec.ts:304:3 › displayed claims › the no-op guard: re-selecting the same value keeps a fresh result (1.1s) |
 
 ## Why each mutation is in the ledger
 

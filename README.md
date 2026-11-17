@@ -208,7 +208,22 @@ never persisted or transmitted.
 
 ## Build & Verify
 
-**TEST_COUNTS_PLACEHOLDER**
+**151 unit tests** (Vitest, `npm test`) across nine suites, plus **13 claims tests**, **2 axe gate
+tests** and **5 functional flows in four browser engines** (Playwright). Every one of them runs real
+computation — there are no fixtures and no recorded answers anywhere in this repo, because at these
+sizes there is no reason for any.
+
+| Suite | Tests | What it holds |
+|---|---|---|
+| `src/prc/params.test.ts` | 50 | **Check B** — every number in the formula table to four decimals, and **check G**'s refused parameters, each a named test |
+| `src/prc/randomness.test.ts` | 19 | `erfc` against known values from an independent implementation; both statistical tests against strings designed to fail them |
+| `src/prc/keygen.test.ts` | 18 | **Check A** — 20 keys at each offered `n` and `t` (240 keys), plus the hand-sized worked example with no sampler in it |
+| `src/prc/code.test.ts` | 14 | **Check C** — the zero syndrome, and which checks a single flipped bit disturbs, asserted against the key's own record of what it sampled |
+| `src/prc/weak.test.ts` | 13 | **Check E** — the weak-key rate and the distinguisher, plus invariant 2 and the correlation inside a comparison group |
+| `src/prc/bits.test.ts` | 12 | **Invariant 3** — chi-square over `randomBelow`, the permutation and the subset sampler |
+| `src/prc/trials.test.ts` | 9 | that the runner yields, so a cancel can land; histogram binning |
+| `src/prc/rates.test.ts` | 9 | **Check D** — acceptance, mean syndrome weight and the heavy tail, over 300 trials each |
+| `src/prc/invariants.test.ts` | 7 | **Invariant 1** — `P·G = 0` checked against keys that really are broken, and the worker round-trip |
 
 **The formula table, asserted to four decimal places** (`src/prc/params.test.ts`). Every value was
 computed independently of this implementation before it existed, and the tests carry the literals

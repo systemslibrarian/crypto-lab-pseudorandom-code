@@ -74,9 +74,55 @@ function bundleHash() {
   return hash.digest('hex').slice(0, 16);
 }
 
+/**
+ * Was this run red because the TEST bit, or because the harness fell over?
+ *
+ * "A kill requires the run to have served the mutated code" is not satisfied
+ * by any red run whatsoever. A preview server that never started, a connection
+ * refused, a browser that failed to launch — each of those goes red without a
+ * single assertion having been evaluated, and counting one as a kill is how a
+ * gate certifies itself against a check that never ran. It is not theoretical
+ * here: a sibling lab built in the same window took this lab's port for a few
+ * seconds, two mutations came back red with `Process from config.webServer was
+ * not able to start`, and the first version of this script recorded both as
+ * kills.
+ *
+ * So a red run is classified, and only a red run that reached the assertions
+ * counts. Anything else is INCONCLUSIVE — reported, never counted.
+ */
+const HARNESS_FAILURE = [
+  /webServer was not able to start/i,
+  /Port \d+ is already in use/i,
+  /ECONNREFUSED/,
+  /browserType\.launch/i,
+  /Executable doesn't exist/i,
+  /Timed out waiting \d+ms from config\.webServer/i,
+  /No tests found/i,
+  /Cannot find module/i,
+];
+
+function harnessFailed(output) {
+  const matched = HARNESS_FAILURE.find((pattern) => pattern.test(output));
+  return matched ? String(matched) : null;
+}
+
 /** The first line of a runner's output that names a failure, for the ledger. */
 function firstFinding(output) {
   const lines = output.split('\n');
+
+  // Vitest and Playwright both print a summary count. How MANY tests a
+  // mutation knocked over says more than which one happened to be reported
+  // first — the first is an artefact of file ordering, the count is a
+  // measurement of how much of the suite was standing on that line.
+  const vitest = output.match(/Tests\s+(\d+) failed \| (\d+) passed/);
+  const playwright = output.match(/(\d+) failed/);
+  const named = lines
+    .map((line) => line.match(/^\s*(?:FAIL|✘|×)\s+(.*)$/))
+    .find(Boolean);
+  const first = named ? named[1].trim().replace(/\s+\d+ms$/, '').slice(0, 170) : null;
+  if (vitest && first) return `${vitest[1]} of ${Number(vitest[1]) + Number(vitest[2])} tests failed; first: ${first}`;
+  if (playwright && first) return `${playwright[1]} failed; first: ${first}`;
+
   const patterns = [
     // tsc's own diagnostics first: `src/x.ts(12,3): error TS6133: ...`.
     /^(\S+\(\d+,\d+\): error TS\d+: .*)$/m,
@@ -187,7 +233,27 @@ try {
   );
   process.exit(1);
 }
+/**
+ * The patches currently applied, so a killed run restores them.
+ *
+ * The `finally` around each mutation covers a thrown error; it does NOT cover
+ * SIGTERM, and a run killed between applying a patch and restoring it leaves
+ * an inverted condition in the tree. That has happened here twice under a
+ * background runner that kills long jobs. So the live patch set is held here
+ * and the same signal handler that releases the lock puts the files back.
+ */
+let liveOriginals = null;
+
 const releaseLock = () => {
+  if (liveOriginals !== null) {
+    try {
+      restore(liveOriginals);
+      console.error('\nInterrupted mid-mutation; the patched files were restored.');
+    } catch (error) {
+      console.error(`\nInterrupted mid-mutation and COULD NOT RESTORE: ${error.message}`);
+    }
+    liveOriginals = null;
+  }
   try {
     closeSync(lockFd);
     rmSync(LOCK, { force: true });
@@ -204,24 +270,78 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 }
 
 const PORT = 4245;
-const portHeld = await new Promise((done) => {
-  // A CONNECT, not a bind. Binding 127.0.0.1 succeeds while a listener sits on
-  // ::1 (or the reverse), which is how a probe comes back clean against a
-  // server that is about to refuse the real run — exactly the false negative
-  // this precondition exists to prevent.
-  const socket = createConnection({ host: 'localhost', port: PORT });
-  socket.setTimeout(1500);
-  socket.once('connect', () => {
-    socket.destroy();
-    done(true);
+
+/**
+ * A CONNECT, on BOTH stacks.
+ *
+ * Binding is the obvious test and it is wrong here: `vite preview` listens on
+ * `localhost`, which on macOS is `::1`, while a probe that binds `127.0.0.1`
+ * — or `0.0.0.0`, which does not collide with an IPv6-only listener —
+ * succeeds and reports the port free. That false negative cost a run: the
+ * probe passed, Playwright then refused to start, and the whole thing read as
+ * a flake. Connecting to each family by literal address asks the only question
+ * that matters: is anything answering on this port?
+ */
+async function portInUse(address) {
+  return new Promise((done) => {
+    const socket = createConnection({ host: address, port: PORT });
+    socket.setTimeout(1500);
+    socket.once('connect', () => {
+      socket.destroy();
+      done(true);
+    });
+    const clear = () => {
+      socket.destroy();
+      done(false);
+    };
+    socket.once('error', clear);
+    socket.once('timeout', clear);
   });
-  const clear = () => {
-    socket.destroy();
-    done(false);
-  };
-  socket.once('error', clear);
-  socket.once('timeout', clear);
-});
+}
+/**
+ * Twice, a second apart, because a server that has just been killed keeps
+ * accepting for a moment: its listening socket is gone but the kernel still
+ * completes connections already in the backlog, so a single probe reports a
+ * freshly-freed port as held. Two agreeing probes separated by a second tell
+ * a live server from a dying one, and the cost of the wait is paid once per
+ * run.
+ */
+async function anyStackHolds() {
+  const held = await Promise.all([portInUse('127.0.0.1'), portInUse('::1')]);
+  return held.some(Boolean);
+}
+/**
+ * Wait for the port rather than refusing on the first look.
+ *
+ * Two things make a short wait the right behaviour instead of an immediate
+ * stop. A server that has just been killed keeps accepting for a moment — its
+ * listening socket is gone but the kernel still completes connections already
+ * in the backlog — so a single probe reports a freshly-freed port as held. And
+ * when a sibling lab is built in the same window, its own Playwright runs take
+ * the port in bursts; MUTATION_PORT_WAIT seconds is long enough to sit one out.
+ *
+ * It still REFUSES at the end rather than proceeding. Running against someone
+ * else's preview is the failure this guard exists to prevent, and waiting
+ * politely for it would be the same mistake with better manners.
+ */
+const WAIT_SECONDS = Number(process.env.MUTATION_PORT_WAIT ?? 300);
+
+/** Wait up to `WAIT_SECONDS` for the port, and report whether it came free. */
+async function waitForPort(what) {
+  if (!(await anyStackHolds())) return true;
+  const until = Date.now() + WAIT_SECONDS * 1000;
+  console.log(`  port ${PORT} is busy before ${what}; waiting up to ${WAIT_SECONDS}s`);
+  while (Date.now() < until) {
+    await new Promise((done) => setTimeout(done, 5000));
+    if (!(await anyStackHolds())) {
+      console.log(`  port ${PORT} freed`);
+      return true;
+    }
+  }
+  return false;
+}
+
+const portHeld = !(await waitForPort('the baseline'));
 if (portHeld) {
   console.error(
     `Port ${PORT} is already in use. Something — most likely a \`vite preview\` left running — is\n` +
@@ -244,10 +364,31 @@ if (!baselineBuild.ok) {
 const cleanHash = bundleHash();
 console.log(`  build ok, bundle ${cleanHash}`);
 
+/**
+ * Run one owning command, waiting for the port and retrying a start failure.
+ *
+ * Retries are ONLY for a failure that never reached an assertion — a preview
+ * server that could not bind, a browser that would not launch. A run that did
+ * reach the assertions is returned as it stands, red or green: re-rolling a
+ * real result until it reads the way the ledger wants is the opposite of what
+ * this script is for.
+ */
+async function runOwning(name, what) {
+  const { cmd, args, browser } = COMMANDS[name];
+  if (browser) await waitForPort(what);
+  let result = run(cmd, args, { CI: '1' });
+  for (let attempt = 2; browser && !result.ok && harnessFailed(result.out) && attempt <= 4; attempt++) {
+    console.log(`     could not start; waiting for the port, attempt ${attempt} of 4`);
+    await waitForPort(`attempt ${attempt} of ${what}`);
+    result = run(cmd, args, { CI: '1' });
+  }
+  return result;
+}
+
 const baseline = {};
 for (const name of neededCommands) {
-  const { cmd, args, label } = COMMANDS[name];
-  const result = run(cmd, args, { CI: '1' });
+  const { label } = COMMANDS[name];
+  const result = await runOwning(name, `the ${label} baseline`);
   baseline[name] = result;
   console.log(`  ${label}: ${result.ok ? 'PASS' : 'FAIL'} (${result.seconds}s)`);
   if (!result.ok) {
@@ -267,6 +408,7 @@ for (const mutation of selected) {
   let originals;
   try {
     originals = applyPatches(mutation.patches);
+    liveOriginals = originals;
   } catch (error) {
     records.push({ mutation, outcome: 'LEDGER-STALE', detail: String(error.message) });
     console.log(`     LEDGER STALE — ${error.message}`);
@@ -293,8 +435,20 @@ for (const mutation of selected) {
       continue;
     }
 
-    const { cmd, args, label } = COMMANDS[mutation.owner];
-    const result = run(cmd, args, { CI: '1' });
+    const { label } = COMMANDS[mutation.owner];
+    const result = await runOwning(mutation.owner, `mutation [${mutation.id}]`);
+    const harness = result.ok ? null : harnessFailed(result.out);
+    if (harness !== null) {
+      // Red, but not from an assertion. Rule 3 is not satisfied: nothing was
+      // measured, so nothing may be claimed.
+      records.push({
+        mutation,
+        outcome: 'INCONCLUSIVE',
+        detail: `the ${label} failed before reaching its assertions (${harness}) — not a kill`,
+      });
+      console.log(`     INCONCLUSIVE — the ${label} never ran: ${firstFinding(result.out)}`);
+      continue;
+    }
     if (result.ok) {
       records.push({
         mutation,
@@ -314,6 +468,7 @@ for (const mutation of selected) {
     }
   } finally {
     restore(originals);
+    liveOriginals = null;
   }
 }
 
