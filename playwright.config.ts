@@ -14,15 +14,21 @@ import { defineConfig, devices } from '@playwright/test';
  * port means `reuseExistingServer` silently scans a DIFFERENT lab's preview,
  * which has really happened in this fleet.
  *
- * ONE COLLISION TO KNOW ABOUT, because the registry could not see it at the
+ * A COLLISION TO KNOW ABOUT, because the registry could not see it at the
  * time. `port-sync` reports the next free port by reading the labs it can
- * find, so two labs built in the same window are both told the same number:
- * on 17 November 2026 it handed 4245 to this lab and to `crypto-lab-cold-boot`
- * (which had no commits yet), and `crypto-lab-lightweight-bench` took 4246
- * after noticing this lab's committed claim. If cold-boot keeps 4245, one of
- * the two has to move and the registry decides; a run here that dies with
- * "Port 4245 is already in use" while nothing of this lab's is running is that
- * collision rather than a flake.
+ * find and the registry it keeps, so several labs built in the same window are
+ * all told the same number. On 17 November 2026 it handed 4245 here and to
+ * `crypto-lab-quic-packet` — `port-sync check` reports both under TWO LABS ON
+ * ONE PORT, and both under NOT IN THE REGISTRY — while
+ * `crypto-lab-cold-boot` also named 4245 in its working tree, and
+ * `crypto-lab-lightweight-bench` took 4246 after noticing this lab's committed
+ * claim.
+ *
+ * `node tools/port-sync.js` in the catalog repo arbitrates and pins; until it
+ * has, a run here that dies with "Port 4245 is already in use" while nothing
+ * of this lab's is running is that collision rather than a flake — and worse,
+ * a local run CAN reach the other lab's preview and scan its page. CI is
+ * unaffected: each job gets its own container.
  */
 export default defineConfig({
   testDir: './e2e',
