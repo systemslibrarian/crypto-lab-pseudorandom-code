@@ -6,3 +6,9 @@ playwright-report
 test-results
 public/deployment.json
 chat.md
+# The build standard's local copy, for the same reason as chat.md: the
+# canonical file is audits/_MASTER-TEMPLATE.md in the crypto-lab catalog repo,
+# and a committed snapshot of it ages silently into a second, wrong account of
+# what this lab is supposed to be. `brief.md` IS committed - it is this lab's
+# own specification and nothing else holds it.
+_MASTER-TEMPLATE.md
