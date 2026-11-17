@@ -49,7 +49,9 @@ import { publishStrings } from './testHook.js';
 const TRIALS = 300;
 
 /** The sentence the negative claim is made of. Asserted verbatim by the claims suite. */
-export const NEGATIVE_CLAIM = '';
+export const NEGATIVE_CLAIM =
+  'Passing the randomness checks on this page says nothing about whether these strings can be told ' +
+  'from noise: for this key, anyone holding the public key can tell, without the secret.';
 
 export function renderWeakPanel(root: HTMLElement): void {
   let resultSerial = -1;

@@ -78,6 +78,8 @@ function bundleHash() {
 function firstFinding(output) {
   const lines = output.split('\n');
   const patterns = [
+    // tsc's own diagnostics first: `src/x.ts(12,3): error TS6133: ...`.
+    /^(\S+\(\d+,\d+\): error TS\d+: .*)$/m,
     /^\s*(?:FAIL|✘|×)\s+(.*)$/,
     /AssertionError: (.*)$/,
     /Error: (.*)$/,
@@ -137,6 +139,36 @@ function restore(originals) {
  * error about a port, three screens into a long run, reads as a flake. Say it
  * here instead.
  */
+/**
+ * A clean working tree, or no run at all.
+ *
+ * "Commit the real work BEFORE mutating" is §4.1c's first hard-won rule, and
+ * it is enforced here rather than remembered. It was earned in this repo: a
+ * `git add -A && git commit` issued while a mutation run was live committed
+ * `NEGATIVE_CLAIM = ''` — a mutation, mid-check — into main. The run restored
+ * the file correctly afterwards, which is exactly what made it invisible: the
+ * tree was right and only the COMMIT was wrong.
+ *
+ * Refusing on a dirty tree closes both halves of that. Nothing can be
+ * committed from under a run, because there is nothing uncommitted to commit;
+ * and the final "working tree unchanged" check below has a known-good state to
+ * compare against instead of a mixture.
+ */
+const dirty = spawnSync('git', ['status', '--porcelain', '--', 'src', 'e2e'], {
+  cwd: ROOT,
+  encoding: 'utf8',
+});
+if ((dirty.stdout ?? '').trim() !== '') {
+  console.error(
+    'The working tree under src/ and e2e/ has uncommitted changes:\n\n' +
+      dirty.stdout +
+      '\nCommit them first. A mutation run rewrites these files and restores them afterwards, so a\n' +
+      'session that dies mid-check strands an inverted condition in the tree — and a commit made\n' +
+      'while a run is live captures a mutation as if it were the source. Both have happened here.',
+  );
+  process.exit(1);
+}
+
 /**
  * One run at a time. Two concurrent runs patch and restore the same files, so
  * each measures the other's mutations as its own baseline — which is how a
@@ -245,9 +277,11 @@ for (const mutation of selected) {
     const build = run('npm', ['run', 'build']);
     if (!build.ok) {
       // Rule 4. A failed build serves the previous bundle, so a green suite
-      // here would prove nothing at all.
-      records.push({ mutation, outcome: 'DOES-NOT-BUILD', detail: firstFinding(build.out) });
-      console.log(`     DOES NOT BUILD — ${firstFinding(build.out)}`);
+      // here would prove nothing at all. The compiler's own words go in the
+      // ledger: "the build failed" is not a finding anyone can act on.
+      const why = firstFinding(build.out);
+      records.push({ mutation, outcome: 'DOES-NOT-BUILD', detail: why });
+      console.log(`     DOES NOT BUILD — ${why}\n${build.out.trim().split('\n').slice(-12).join('\n')}`);
       continue;
     }
     const mutatedHash = bundleHash();
