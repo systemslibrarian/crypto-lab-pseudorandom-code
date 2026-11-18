@@ -49,12 +49,24 @@ jobs:
       # never blocked a publish. Here that would mean shipping a lab whose
       # parity checks were wrong so long as the browser specs passed.
       - name: Unit and correctness tests (Vitest)
+        env:
+          # Vitest colours its summary even into a pipe, and the escape codes
+          # land between "Tests" and the count.
+          NO_COLOR: '1'
+          FORCE_COLOR: '0'
         run: |
           set -eu
           npm test 2>&1 | tee /tmp/vitest.log
           # A test step that runs ZERO tests exits 0. Read the count rather
           # than the exit code.
-          grep -Eq 'Tests +[0-9]+ passed' /tmp/vitest.log || {
+          #
+          # Strip ANSI before matching, and do not trust NO_COLOR alone: this
+          # guard once failed a run in which all 151 tests passed, because the
+          # log held "Tests \e[1m\e[32m151 passed" and `Tests +[0-9]+` cannot
+          # match across the escape. A guard that fails closed on its own
+          # formatting blocks the deploy while saying nothing about the lab.
+          sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' /tmp/vitest.log > /tmp/vitest.plain
+          grep -Eq 'Tests +[0-9]+ passed' /tmp/vitest.plain || {
             echo "::error::the Vitest summary did not report any passing tests"
             exit 1
           }
@@ -73,19 +85,29 @@ jobs:
           path: dist
 
   # The image carries the exact browser binaries and Linux libraries expected
-  # by Playwright 1.64. Pinned by digest so the rendering and runtime
-  # environment cannot drift under an unchanged commit.
+  # by the Playwright version the lockfile resolves. Pinned by digest so the
+  # rendering and runtime environment cannot drift under an unchanged commit.
+  #
+  # The image TAG must match that version, and @playwright/test is pinned
+  # exactly for that reason. A caret range here is how this gate broke once
+  # already: `^1.64.0` resolved to 1.65.1 against the v1.64.0 image, every
+  # browser launch failed with "Executable doesn't exist at
+  # /ms-playwright/chromium_headless_shell-...", and the deploy was skipped --
+  # a red gate that says nothing about the lab. The step below names that
+  # mismatch instead of letting it surface as a missing file.
   browser-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
     container:
-      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
       options: --ipc=host
     env:
       # The Actions runner mounts a HOME that Firefox cannot use in-container.
       HOME: /root
+      # Keep in step with the image tag above; asserted before the gate runs.
+      EXPECTED_PLAYWRIGHT_VERSION: 1.65.1
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -107,6 +129,16 @@ jobs:
       # engine-dependent thing in the repo, and a page whose worker never
       # starts renders placeholders that a scan reports as perfectly
       # accessible.
+      - name: Fail if the installed Playwright does not match the image
+        run: |
+          set -eu
+          installed=$(npx playwright --version | awk '{print $2}')
+          echo "installed Playwright $installed; image carries browsers for $EXPECTED_PLAYWRIGHT_VERSION"
+          [ "$installed" = "$EXPECTED_PLAYWRIGHT_VERSION" ] || {
+            echo "::error::Playwright $installed does not match the container image ($EXPECTED_PLAYWRIGHT_VERSION); its browsers are not in this image. Bump the image digest and EXPECTED_PLAYWRIGHT_VERSION together, or pin @playwright/test back."
+            exit 1
+          }
+
       - name: Complete browser gate (accessibility, claims, cross-browser flows)
         run: npm run test:e2e:all
 
