@@ -45,8 +45,7 @@ export function renderRandomnessPanel(root: HTMLElement): void {
         'switches between ones and zeros at the rate a random string would — a string can be perfectly ' +
         'balanced and still be a block of zeros followed by a block of ones, which the first test cannot ' +
         'see at all. (NIST SP 800-22 Rev 1a, sections 2.1 and 2.3.)',
-      'Both tests report a p-value, and by convention a p-value of 0.01 or more is unremarkable: the ' +
-        'string is as irregular as chance would make it.',
+      'For each applicable test, a p-value below 0.01 flags an unusual result under the uniform-bit model. A larger value means this test did not flag the sample.',
     ),
     h(
       'div',
@@ -78,15 +77,17 @@ export function renderRandomnessPanel(root: HTMLElement): void {
     publishStrings({ codeword, random: noise });
 
     const rows: (string | HTMLElement)[][] = [];
-    const verdicts: { label: string; unremarkable: boolean }[] = [];
+    let flagged = 0;
+    let skipped = 0;
     for (const [label, bits] of [
       ['Codeword', unpack(codeword, params.n)],
       ['Random string', unpack(noise, params.n)],
     ] as [string, Uint8Array][]) {
       const freq = frequencyTest(bits);
       const runs = runsTest(bits);
-      verdicts.push({ label: `${label} — frequency`, unremarkable: freq.unremarkable });
-      verdicts.push({ label: `${label} — runs`, unremarkable: runs.unremarkable });
+      if (!freq.unremarkable) flagged++;
+      if (!runs.applicable) skipped++;
+      else if (!runs.unremarkable) flagged++;
       rows.push([
         label,
         'Frequency (monobit)',
@@ -98,14 +99,14 @@ export function renderRandomnessPanel(root: HTMLElement): void {
       rows.push([
         label,
         'Runs',
-        `${num(runs.runs)} runs (expected ${runs.expectedRuns.toFixed(0)})`,
-        Math.abs(runs.runs - runs.expectedRuns).toFixed(1),
+        runs.applicable ? `${num(runs.runs)} runs (expected ${runs.expectedRuns.toFixed(0)})` : 'not counted',
+        runs.applicable ? Math.abs(runs.runs - runs.expectedRuns).toFixed(1) : '—',
         runs.applicable ? runs.pValue.toFixed(4) : 'not run',
         runs.applicable ? (runs.unremarkable ? 'unremarkable' : 'remarkable') : 'proportion too skewed',
       ]);
     }
 
-    const allUnremarkable = verdicts.every((v) => v.unremarkable);
+    const allUnremarkable = flagged === 0 && skipped === 0;
 
     out.append(
       withClass(
@@ -121,13 +122,13 @@ export function renderRandomnessPanel(root: HTMLElement): void {
         allUnremarkable ? 'pass' : 'fail',
         allUnremarkable
           ? 'UNREMARKABLE — both tests read the codeword the same way they read the random string'
-          : 'One test came out remarkable on this draw — redraw and look again',
+          : `This draw: ${flagged} flagged, ${skipped} skipped out of four checks`,
         {
           claim: 'randomness-verdict',
           sub: allUnremarkable
             ? 'Which is what should happen, and what it is worth is the subject of the note below.'
             : 'At the 0.01 line about one test in a hundred comes out remarkable on genuinely random ' +
-              'bits, so a single remarkable reading is itself unremarkable.',
+              'bits. A skipped runs test has no measured p-value.',
         },
       ),
       note(
